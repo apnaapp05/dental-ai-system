@@ -2,18 +2,32 @@
 FROM python:3.11-slim AS builder
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
-COPY requirements.txt /app/
-RUN pip wheel --no-cache-dir --wheel-dir /usr/src/app/wheels -r requirements.txt
+
+# install build deps
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc \
+ && rm -rf /var/lib/apt/lists/*
+
+# copy requirements and build wheels
+COPY requirements.txt /app/requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /usr/src/app/wheels -r /app/requirements.txt
 
 # --- STAGE 2: RUNTIME ---
 FROM python:3.11-slim AS runtime
 ENV PYTHONUNBUFFERED=1
 ENV AGENT_NAME=AppointmentAgent
 WORKDIR /app
-COPY --from=builder /usr/src/app/wheels /usr/src/app/wheels
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+
+# copy wheels and requirements from builder and install them
+COPY --from=builder /usr/src/app/wheels /wheels
+COPY --from=builder /app/requirements.txt /app/requirements.txt
+RUN pip install --no-index --find-links /wheels -r /app/requirements.txt
+
+# copy application code
 COPY . /app
 
-# The command executes the agent API service with concurrency for high availability.
+# expose port (informational only)
+EXPOSE 8080
+
+# run the server
 CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "agent_server:app", "--bind", "0.0.0.0:8080"]
